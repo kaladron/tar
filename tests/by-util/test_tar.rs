@@ -473,4 +473,157 @@ fn test_roundtrip_special_characters_in_names() {
 // 6. Platform-specific Tests
 // -----------------------------------------------------------------------------
 
-// TODO: Implement platform-specific tests (Unix permissions, etc.)
+#[cfg(unix)]
+#[test]
+fn test_preserve_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create a file with specific permissions
+    at.write("file.txt", "content");
+    let file_path = at.plus("file.txt");
+    std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    
+    // Verify initial permissions
+    let metadata = std::fs::metadata(&file_path).unwrap();
+    let initial_mode = metadata.permissions().mode();
+    assert_eq!(initial_mode & 0o777, 0o755);
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "file.txt"])
+        .succeeds();
+    
+    // Remove original
+    at.remove("file.txt");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify permissions are preserved
+    let metadata = std::fs::metadata(at.plus("file.txt")).unwrap();
+    let extracted_mode = metadata.permissions().mode();
+    assert_eq!(extracted_mode & 0o777, 0o755, 
+               "Permissions not preserved: expected 0o755, got 0o{:o}", 
+               extracted_mode & 0o777);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_preserve_permissions_multiple_files() {
+    use std::os::unix::fs::PermissionsExt;
+    
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create files with different permissions
+    at.write("file1.txt", "content1");
+    at.write("file2.txt", "content2");
+    at.write("file3.txt", "content3");
+    
+    std::fs::set_permissions(at.plus("file1.txt"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(at.plus("file2.txt"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(at.plus("file3.txt"), std::fs::Permissions::from_mode(0o600)).unwrap();
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "file1.txt", "file2.txt", "file3.txt"])
+        .succeeds();
+    
+    // Remove originals
+    at.remove("file1.txt");
+    at.remove("file2.txt");
+    at.remove("file3.txt");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify each file's permissions
+    let mode1 = std::fs::metadata(at.plus("file1.txt")).unwrap().permissions().mode();
+    let mode2 = std::fs::metadata(at.plus("file2.txt")).unwrap().permissions().mode();
+    let mode3 = std::fs::metadata(at.plus("file3.txt")).unwrap().permissions().mode();
+    
+    assert_eq!(mode1 & 0o777, 0o644, "file1.txt permissions not preserved");
+    assert_eq!(mode2 & 0o777, 0o755, "file2.txt permissions not preserved");
+    assert_eq!(mode3 & 0o777, 0o600, "file3.txt permissions not preserved");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_preserve_directory_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create directory with specific permissions
+    at.mkdir("testdir");
+    std::fs::set_permissions(at.plus("testdir"), std::fs::Permissions::from_mode(0o750)).unwrap();
+    at.write("testdir/file.txt", "content");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "testdir"])
+        .succeeds();
+    
+    // Remove directory
+    at.remove("testdir/file.txt");
+    std::fs::remove_dir(at.plus("testdir")).unwrap();
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify directory permissions are preserved
+    let metadata = std::fs::metadata(at.plus("testdir")).unwrap();
+    let mode = metadata.permissions().mode();
+    assert_eq!(mode & 0o777, 0o750, 
+               "Directory permissions not preserved: expected 0o750, got 0o{:o}", 
+               mode & 0o777);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_preserve_executable_bit() {
+    use std::os::unix::fs::PermissionsExt;
+    
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create an executable file
+    at.write("script.sh", "#!/bin/bash\necho 'Hello'");
+    let script_path = at.plus("script.sh");
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    
+    // Verify it's executable
+    let metadata = std::fs::metadata(&script_path).unwrap();
+    assert!(metadata.permissions().mode() & 0o111 != 0, "File should be executable");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "script.sh"])
+        .succeeds();
+    
+    // Remove original
+    at.remove("script.sh");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify executable bit is preserved
+    let metadata = std::fs::metadata(at.plus("script.sh")).unwrap();
+    let mode = metadata.permissions().mode();
+    assert!(mode & 0o111 != 0, 
+            "Executable bit not preserved: mode is 0o{:o}", 
+            mode & 0o777);
+    assert_eq!(mode & 0o777, 0o755);
+}
