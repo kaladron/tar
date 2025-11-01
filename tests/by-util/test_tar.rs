@@ -627,3 +627,316 @@ fn test_preserve_executable_bit() {
             mode & 0o777);
     assert_eq!(mode & 0o777, 0o755);
 }
+
+// -----------------------------------------------------------------------------
+// 7. Edge Case Tests
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_very_long_filename() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create a file with a very long name (100 characters)
+    let long_name = "a".repeat(100) + ".txt";
+    at.write(&long_name, "content with long filename");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", &long_name])
+        .succeeds();
+    
+    // Remove original
+    at.remove(&long_name);
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify file was extracted with correct content
+    assert!(at.file_exists(&long_name));
+    assert_eq!(at.read(&long_name), "content with long filename");
+}
+
+#[test]
+fn test_deeply_nested_path() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create a deeply nested directory structure (10 levels)
+    let mut path = String::new();
+    for i in 0..10 {
+        if !path.is_empty() {
+            path.push('/');
+        }
+        path.push_str(&format!("dir{i}"));
+        at.mkdir(&path);
+    }
+    
+    let file_path = format!("{path}/deep_file.txt");
+    at.write(&file_path, "deeply nested content");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "dir0"])
+        .succeeds();
+    
+    // Remove the directory structure
+    std::fs::remove_file(at.plus(&file_path)).unwrap();
+    for i in (0..10).rev() {
+        let mut dir_path = String::new();
+        for j in 0..=i {
+            if !dir_path.is_empty() {
+                dir_path.push('/');
+            }
+            dir_path.push_str(&format!("dir{j}"));
+        }
+        std::fs::remove_dir(at.plus(&dir_path)).unwrap();
+    }
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify deeply nested file exists with correct content
+    assert!(at.file_exists(&file_path));
+    assert_eq!(at.read(&file_path), "deeply nested content");
+}
+
+#[test]
+fn test_file_with_spaces_in_name() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create files with spaces in names
+    at.write("file with spaces.txt", "content 1");
+    at.write("another file.txt", "content 2");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "file with spaces.txt", "another file.txt"])
+        .succeeds();
+    
+    // Remove originals
+    at.remove("file with spaces.txt");
+    at.remove("another file.txt");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify files extracted correctly
+    assert!(at.file_exists("file with spaces.txt"));
+    assert!(at.file_exists("another file.txt"));
+    assert_eq!(at.read("file with spaces.txt"), "content 1");
+    assert_eq!(at.read("another file.txt"), "content 2");
+}
+
+#[test]
+fn test_large_number_of_files() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create 100 files
+    let num_files = 100;
+    for i in 0..num_files {
+        at.write(&format!("file{i}.txt"), &format!("content {i}"));
+    }
+    
+    // Collect file names for archive creation
+    let files: Vec<String> = (0..num_files).map(|i| format!("file{i}.txt")).collect();
+    let mut args = vec!["-cf", "archive.tar"];
+    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    args.extend(file_refs);
+    
+    // Create archive
+    ucmd.args(&args).succeeds();
+    
+    // Verify archive was created
+    assert!(at.file_exists("archive.tar"));
+    
+    // Verify archive contains all files
+    let archive_data = at.read_bytes("archive.tar");
+    let mut ar = Archive::new(Cursor::new(archive_data));
+    let entry_count = ar.entries().unwrap().count();
+    assert_eq!(entry_count, num_files, "Archive should contain {num_files} files");
+}
+
+#[test]
+fn test_unicode_filenames() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create files with unicode characters
+    at.write("文件.txt", "Chinese characters");    // 文件 = "file"
+    at.write("файл.txt", "Russian characters");    // файл = "file"
+    at.write("αρχείο.txt", "Greek characters");    // αρχείο = "file"
+    at.write("ファイル.txt", "Japanese characters"); // ファイル = "file"
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "文件.txt", "файл.txt", "αρχείο.txt", "ファイル.txt"])
+        .succeeds();
+    
+    // Remove originals
+    at.remove("文件.txt");
+    at.remove("файл.txt");
+    at.remove("αρχείο.txt");
+    at.remove("ファイル.txt");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify files extracted correctly
+    assert!(at.file_exists("文件.txt"));
+    assert!(at.file_exists("файл.txt"));
+    assert!(at.file_exists("αρχείο.txt"));
+    assert!(at.file_exists("ファイル.txt"));
+    assert_eq!(at.read("文件.txt"), "Chinese characters");
+    assert_eq!(at.read("файл.txt"), "Russian characters");
+    assert_eq!(at.read("αρχείο.txt"), "Greek characters");
+    assert_eq!(at.read("ファイル.txt"), "Japanese characters");
+}
+
+#[test]
+fn test_binary_file_content() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create a file with binary content (non-UTF8 bytes)
+    let binary_content: Vec<u8> = vec![0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD, 0x89, 0x50, 0x4E, 0x47];
+    std::fs::write(at.plus("binary.dat"), &binary_content).unwrap();
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "binary.dat"])
+        .succeeds();
+    
+    // Remove original
+    at.remove("binary.dat");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify binary content is preserved exactly
+    let extracted_content = std::fs::read(at.plus("binary.dat")).unwrap();
+    assert_eq!(extracted_content, binary_content);
+}
+
+#[test]
+fn test_file_with_no_extension() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create files without extensions
+    at.write("README", "readme content");
+    at.write("Makefile", "makefile content");
+    at.write("LICENSE", "license content");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "README", "Makefile", "LICENSE"])
+        .succeeds();
+    
+    // Remove originals
+    at.remove("README");
+    at.remove("Makefile");
+    at.remove("LICENSE");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify files extracted correctly
+    assert!(at.file_exists("README"));
+    assert!(at.file_exists("Makefile"));
+    assert!(at.file_exists("LICENSE"));
+    assert_eq!(at.read("README"), "readme content");
+    assert_eq!(at.read("Makefile"), "makefile content");
+    assert_eq!(at.read("LICENSE"), "license content");
+}
+
+#[test]
+fn test_hidden_files() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create hidden files (files starting with dot)
+    at.write(".hidden", "hidden content");
+    at.write(".gitignore", "*.tmp");
+    at.mkdir(".config");
+    at.write(".config/settings", "settings content");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", ".hidden", ".gitignore", ".config"])
+        .succeeds();
+    
+    // Remove originals
+    at.remove(".hidden");
+    at.remove(".gitignore");
+    at.remove(".config/settings");
+    std::fs::remove_dir(at.plus(".config")).unwrap();
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify hidden files extracted correctly
+    assert!(at.file_exists(".hidden"));
+    assert!(at.file_exists(".gitignore"));
+    assert!(at.dir_exists(".config"));
+    assert!(at.file_exists(".config/settings"));
+    assert_eq!(at.read(".hidden"), "hidden content");
+    assert_eq!(at.read(".gitignore"), "*.tmp");
+    assert_eq!(at.read(".config/settings"), "settings content");
+}
+
+#[test]
+fn test_mixed_empty_and_non_empty_directories() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create directory structure with both empty and non-empty directories
+    at.mkdir("parent");
+    at.mkdir("parent/empty_dir");
+    at.mkdir("parent/non_empty_dir");
+    at.write("parent/non_empty_dir/file.txt", "content");
+    at.mkdir("parent/nested");
+    at.mkdir("parent/nested/also_empty");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "parent"])
+        .succeeds();
+    
+    // Remove directory structure
+    at.remove("parent/non_empty_dir/file.txt");
+    std::fs::remove_dir(at.plus("parent/nested/also_empty")).unwrap();
+    std::fs::remove_dir(at.plus("parent/nested")).unwrap();
+    std::fs::remove_dir(at.plus("parent/non_empty_dir")).unwrap();
+    std::fs::remove_dir(at.plus("parent/empty_dir")).unwrap();
+    std::fs::remove_dir(at.plus("parent")).unwrap();
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify all directories exist
+    assert!(at.dir_exists("parent"));
+    assert!(at.dir_exists("parent/empty_dir"));
+    assert!(at.dir_exists("parent/non_empty_dir"));
+    assert!(at.dir_exists("parent/nested"));
+    assert!(at.dir_exists("parent/nested/also_empty"));
+    assert!(at.file_exists("parent/non_empty_dir/file.txt"));
+    assert_eq!(at.read("parent/non_empty_dir/file.txt"), "content");
+}
