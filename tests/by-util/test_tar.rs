@@ -201,7 +201,96 @@ fn test_create_nonexistent_file_fails() {
 // 3. Extract Operation Tests
 // -----------------------------------------------------------------------------
 
-// TODO: Implement extract operation tests
+#[test]
+fn test_extract_basic() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create an archive first
+    at.write("original.txt", "test content");
+    ucmd.args(&["-cf", "archive.tar", "original.txt"])
+        .succeeds();
+    
+    // Remove original and extract (extracts to current directory)
+    at.remove("original.txt");
+    
+    new_ucmd!()
+        .arg(&at.plus("archive.tar"))
+        .arg("-xf")
+        .arg(&at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds()
+        .no_stderr();
+    
+    assert!(at.file_exists("original.txt"));
+    assert_eq!(at.read("original.txt"), "test content");
+}
+
+#[test]
+fn test_extract_verbose() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create an archive
+    at.write("file1.txt", "content");
+    ucmd.args(&["-cf", "archive.tar", "file1.txt"])
+        .succeeds();
+    
+    at.remove("file1.txt");
+    
+    // Extract with verbose (extracts to current directory)
+    new_ucmd!()
+        .arg("-xvf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds()
+        .stdout_contains("file1.txt");
+    
+    assert!(at.file_exists("file1.txt"));
+}
+
+#[test]
+fn test_extract_nonexistent_archive() {
+    new_ucmd!()
+        .args(&["-xf", "nonexistent.tar"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("nonexistent.tar");
+}
+
+#[test]
+fn test_extract_directory_structure() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create directory structure
+    at.mkdir("testdir");
+    at.write("testdir/file1.txt", "content1");
+    at.mkdir("testdir/subdir");
+    at.write("testdir/subdir/file2.txt", "content2");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "testdir"])
+        .succeeds();
+    
+    // Remove directory contents and directory itself
+    at.remove("testdir/subdir/file2.txt");
+    at.remove("testdir/file1.txt");
+    std::fs::remove_dir(at.plus("testdir/subdir")).unwrap();
+    std::fs::remove_dir(at.plus("testdir")).unwrap();
+    
+    // Extract (extracts to current directory)
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify structure
+    assert!(at.dir_exists("testdir"));
+    assert!(at.file_exists("testdir/file1.txt"));
+    assert!(at.dir_exists("testdir/subdir"));
+    assert!(at.file_exists("testdir/subdir/file2.txt"));
+    assert_eq!(at.read("testdir/file1.txt"), "content1");
+    assert_eq!(at.read("testdir/subdir/file2.txt"), "content2");
+}
 
 // -----------------------------------------------------------------------------
 // 4. Round-trip Tests
