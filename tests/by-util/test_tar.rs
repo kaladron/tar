@@ -25,17 +25,64 @@ use uutests::{at_and_ucmd, new_ucmd};
 
 #[test]
 fn test_invalid_arg() {
-    new_ucmd!().arg("--definitely-invalid").fails().code_is(1);
+    new_ucmd!()
+        .arg("--definitely-invalid")
+        .fails()
+        .code_is(1)
+        .stderr_contains("unexpected argument");
 }
 
 #[test]
 fn test_help() {
-    new_ucmd!().arg("--help").succeeds().code_is(0);
+    new_ucmd!()
+        .arg("--help")
+        .succeeds()
+        .code_is(0)
+        .stdout_contains("an archiving utility");
 }
 
 #[test]
 fn test_version() {
-    new_ucmd!().arg("--version").succeeds().code_is(0);
+    new_ucmd!()
+        .arg("--version")
+        .succeeds()
+        .code_is(0)
+        .stdout_contains("tar");
+}
+
+#[test]
+fn test_missing_f_option_create() {
+    new_ucmd!()
+        .args(&["-c", "file.txt"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("requires an argument");
+}
+
+#[test]
+fn test_missing_f_option_extract() {
+    new_ucmd!()
+        .arg("-x")
+        .fails()
+        .code_is(1)
+        .stderr_contains("requires an argument");
+}
+
+#[test]
+fn test_conflicting_operations() {
+    new_ucmd!()
+        .args(&["-c", "-x", "-f", "archive.tar"])
+        .fails()
+        .code_is(1);
+}
+
+#[test]
+fn test_no_operation_specified() {
+    new_ucmd!()
+        .args(&["-f", "archive.tar"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("must specify one");
 }
 
 // -----------------------------------------------------------------------------
