@@ -3,10 +3,11 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+mod errors;
 mod operations;
 
 use clap::{arg, crate_version, Arg, ArgAction, Command};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uucore::error::UResult;
 use uucore::format_usage;
 
@@ -17,17 +18,55 @@ const USAGE: &str = "tar {A|c|d|r|t|u|x}[GnSkUWOmpsMBiajJzZhPlRvwo] [ARG...]";
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
 
-    // For now, just print a basic message indicating the command was parsed
-    println!("tar: basic implementation - command line parsed successfully");
+    let verbose = matches.get_flag("verbose");
 
-    // Check if any files were specified
-    if let Some(files) = matches.get_many::<PathBuf>("file") {
-        for file in files {
-            println!("File: {}", file.display());
-        }
+    // Handle extract operation
+    if matches.get_flag("extract") {
+        let archive_path = matches
+            .get_one::<PathBuf>("file")
+            .ok_or_else(|| {
+                uucore::error::USimpleError::new(
+                    1,
+                    "tar: option requires an argument -- 'f'",
+                )
+            })?;
+
+        return operations::extract::extract_archive(archive_path, verbose);
     }
 
-    Ok(())
+    // Handle create operation
+    if matches.get_flag("create") {
+        let archive_path = matches
+            .get_one::<PathBuf>("file")
+            .ok_or_else(|| {
+                uucore::error::USimpleError::new(
+                    1,
+                    "tar: option requires an argument -- 'f'",
+                )
+            })?;
+
+        let files: Vec<&Path> = matches
+            .get_many::<PathBuf>("files")
+            .map(|v| v.map(|p| p.as_path()).collect())
+            .unwrap_or_default();
+
+        if files.is_empty() {
+            return Err(uucore::error::USimpleError::new(
+                1,
+                "tar: Cowardly refusing to create an empty archive",
+            )
+            .into());
+        }
+
+        return operations::create::create_archive(archive_path, &files, verbose);
+    }
+
+    // If no operation specified, show help
+    Err(uucore::error::USimpleError::new(
+        1,
+        "tar: You must specify one of the '-Acdtrux', '--delete' or '--test-label' options",
+    )
+    .into())
 }
 
 #[allow(clippy::cognitive_complexity)]
