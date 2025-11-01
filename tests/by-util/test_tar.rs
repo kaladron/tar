@@ -296,7 +296,172 @@ fn test_extract_directory_structure() {
 // 4. Round-trip Tests
 // -----------------------------------------------------------------------------
 
-// TODO: Implement round-trip tests
+#[test]
+fn test_roundtrip_single_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create a file
+    at.write("file.txt", "test content");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "file.txt"])
+        .succeeds();
+    
+    // Remove original
+    at.remove("file.txt");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify content is identical
+    assert!(at.file_exists("file.txt"));
+    assert_eq!(at.read("file.txt"), "test content");
+}
+
+#[test]
+fn test_roundtrip_multiple_files() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create multiple files with different content
+    at.write("file1.txt", "content one");
+    at.write("file2.txt", "content two");
+    at.write("file3.txt", "content three");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "file1.txt", "file2.txt", "file3.txt"])
+        .succeeds();
+    
+    // Remove originals
+    at.remove("file1.txt");
+    at.remove("file2.txt");
+    at.remove("file3.txt");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify all contents are identical
+    assert_eq!(at.read("file1.txt"), "content one");
+    assert_eq!(at.read("file2.txt"), "content two");
+    assert_eq!(at.read("file3.txt"), "content three");
+}
+
+#[test]
+fn test_roundtrip_directory_structure() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create complex directory structure
+    at.mkdir("dir1");
+    at.write("dir1/file1.txt", "content1");
+    at.write("dir1/file2.txt", "content2");
+    at.mkdir("dir1/subdir");
+    at.write("dir1/subdir/file3.txt", "content3");
+    at.mkdir("dir1/subdir/deepdir");
+    at.write("dir1/subdir/deepdir/file4.txt", "content4");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "dir1"])
+        .succeeds();
+    
+    // Remove directory structure
+    at.remove("dir1/subdir/deepdir/file4.txt");
+    std::fs::remove_dir(at.plus("dir1/subdir/deepdir")).unwrap();
+    at.remove("dir1/subdir/file3.txt");
+    std::fs::remove_dir(at.plus("dir1/subdir")).unwrap();
+    at.remove("dir1/file1.txt");
+    at.remove("dir1/file2.txt");
+    std::fs::remove_dir(at.plus("dir1")).unwrap();
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify complete structure and contents
+    assert!(at.dir_exists("dir1"));
+    assert!(at.file_exists("dir1/file1.txt"));
+    assert!(at.file_exists("dir1/file2.txt"));
+    assert!(at.dir_exists("dir1/subdir"));
+    assert!(at.file_exists("dir1/subdir/file3.txt"));
+    assert!(at.dir_exists("dir1/subdir/deepdir"));
+    assert!(at.file_exists("dir1/subdir/deepdir/file4.txt"));
+    
+    assert_eq!(at.read("dir1/file1.txt"), "content1");
+    assert_eq!(at.read("dir1/file2.txt"), "content2");
+    assert_eq!(at.read("dir1/subdir/file3.txt"), "content3");
+    assert_eq!(at.read("dir1/subdir/deepdir/file4.txt"), "content4");
+}
+
+#[test]
+fn test_roundtrip_empty_files() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create empty files
+    at.write("empty1.txt", "");
+    at.write("empty2.txt", "");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "empty1.txt", "empty2.txt"])
+        .succeeds();
+    
+    // Remove originals
+    at.remove("empty1.txt");
+    at.remove("empty2.txt");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify empty files exist and are still empty
+    assert!(at.file_exists("empty1.txt"));
+    assert!(at.file_exists("empty2.txt"));
+    assert_eq!(at.read("empty1.txt"), "");
+    assert_eq!(at.read("empty2.txt"), "");
+}
+
+#[test]
+fn test_roundtrip_special_characters_in_names() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // Create files with special characters (avoiding problematic ones)
+    at.write("file-with-dash.txt", "dash content");
+    at.write("file_with_underscore.txt", "underscore content");
+    at.write("file.multiple.dots.txt", "dots content");
+    
+    // Create archive
+    ucmd.args(&["-cf", "archive.tar", "file-with-dash.txt", 
+                "file_with_underscore.txt", "file.multiple.dots.txt"])
+        .succeeds();
+    
+    // Remove originals
+    at.remove("file-with-dash.txt");
+    at.remove("file_with_underscore.txt");
+    at.remove("file.multiple.dots.txt");
+    
+    // Extract
+    new_ucmd!()
+        .arg("-xf")
+        .arg(at.plus("archive.tar"))
+        .current_dir(at.as_string())
+        .succeeds();
+    
+    // Verify contents
+    assert_eq!(at.read("file-with-dash.txt"), "dash content");
+    assert_eq!(at.read("file_with_underscore.txt"), "underscore content");
+    assert_eq!(at.read("file.multiple.dots.txt"), "dots content");
+}
 
 // -----------------------------------------------------------------------------
 // 5. Error Handling Tests
