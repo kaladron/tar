@@ -89,7 +89,113 @@ fn test_no_operation_specified() {
 // 2. Create Operation Tests
 // -----------------------------------------------------------------------------
 
-// TODO: Implement create operation tests
+#[test]
+fn test_create_single_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    at.write("file1.txt", "test content");
+    
+    ucmd.args(&["-cf", "archive.tar", "file1.txt"])
+        .succeeds()
+        .no_stderr();
+    
+    assert!(at.file_exists("archive.tar"));
+    
+    // Verify archive contents using tar-rs
+    let archive_data = at.read_bytes("archive.tar");
+    let mut ar = Archive::new(Cursor::new(archive_data));
+    let entries: Vec<_> = ar.entries().unwrap()
+        .map(|e| e.unwrap().path().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(entries, vec!["file1.txt"]);
+}
+
+#[test]
+fn test_create_multiple_files() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    at.write("file1.txt", "content1");
+    at.write("file2.txt", "content2");
+    at.write("file3.txt", "content3");
+    
+    ucmd.args(&["-cf", "archive.tar", "file1.txt", "file2.txt", "file3.txt"])
+        .succeeds()
+        .no_stderr();
+    
+    assert!(at.file_exists("archive.tar"));
+    
+    // Verify archive contents
+    let archive_data = at.read_bytes("archive.tar");
+    let mut ar = Archive::new(Cursor::new(archive_data));
+    let mut entries: Vec<_> = ar.entries().unwrap()
+        .map(|e| e.unwrap().path().unwrap().to_string_lossy().to_string())
+        .collect();
+    entries.sort();
+    assert_eq!(entries, vec!["file1.txt", "file2.txt", "file3.txt"]);
+}
+
+#[test]
+fn test_create_directory() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    at.mkdir("dir1");
+    at.write("dir1/file1.txt", "content1");
+    at.write("dir1/file2.txt", "content2");
+    at.mkdir("dir1/subdir");
+    at.write("dir1/subdir/file3.txt", "content3");
+    
+    ucmd.args(&["-cf", "archive.tar", "dir1"])
+        .succeeds()
+        .no_stderr();
+    
+    assert!(at.file_exists("archive.tar"));
+    
+    // Verify archive contains directory and files
+    let archive_data = at.read_bytes("archive.tar");
+    let mut ar = Archive::new(Cursor::new(archive_data));
+    let entries: Vec<_> = ar.entries().unwrap()
+        .map(|e| e.unwrap().path().unwrap().to_string_lossy().to_string())
+        .collect();
+    
+    // Should contain the directory and its contents recursively
+    assert!(entries.iter().any(|e| e.contains("dir1")));
+    assert!(entries.iter().any(|e| e.contains("file1.txt")));
+    assert!(entries.iter().any(|e| e.contains("file2.txt")));
+    assert!(entries.iter().any(|e| e.contains("subdir")));
+    assert!(entries.iter().any(|e| e.contains("file3.txt")));
+}
+
+#[test]
+fn test_create_verbose() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    at.write("file1.txt", "content");
+    
+    ucmd.args(&["-cvf", "archive.tar", "file1.txt"])
+        .succeeds()
+        .stdout_contains("file1.txt");
+    
+    assert!(at.file_exists("archive.tar"));
+}
+
+#[test]
+fn test_create_empty_archive_fails() {
+    new_ucmd!()
+        .args(&["-cf", "archive.tar"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("empty archive");
+}
+
+#[test]
+fn test_create_nonexistent_file_fails() {
+    let (_at, mut ucmd) = at_and_ucmd!();
+    
+    ucmd.args(&["-cf", "archive.tar", "nonexistent.txt"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("nonexistent.txt");
+}
 
 // -----------------------------------------------------------------------------
 // 3. Extract Operation Tests

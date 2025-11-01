@@ -9,7 +9,7 @@ version = "0.0.1"
 authors = ["uutils developers"]
 license = "MIT"
 description = "tar ~ implemented as universal (cross-platform) utils, written in Rust"
-default-run = "tarapp"
+default-run = "tar"
 
 homepage = "https://github.com/uutils/tar"
 repository = "https://github.com/uutils/tar"
@@ -87,7 +87,7 @@ phf_codegen = { workspace = true }
 
 
 [[bin]]
-name = "tarapp"
+name = "tar"
 path = "src/bin/tarapp.rs"
 
 [[bin]]

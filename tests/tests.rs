@@ -4,7 +4,7 @@
 // file that was distributed with this source code.
 use std::env;
 
-pub const TESTS_BINARY: &str = env!("CARGO_BIN_EXE_tarapp");
+pub const TESTS_BINARY: &str = env!("CARGO_BIN_EXE_tar");
 
 // Use the ctor attribute to run this function before any tests
 #[ctor::ctor]

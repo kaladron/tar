@@ -16,7 +16,18 @@ const USAGE: &str = "tar {A|c|d|r|t|u|x}[GnSkUWOmpsMBiajJzZhPlRvwo] [ARG...]";
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let matches = uu_app().try_get_matches_from(args)?;
+    // Collect args - the test framework adds util_name as args[1], so skip it if present
+    let args_vec: Vec<_> = args.collect();
+    let args_to_parse = if args_vec.len() > 1 && args_vec[1] == uucore::util_name() {
+        // Skip the duplicate util_name that test framework adds
+        let mut result = vec![args_vec[0].clone()];
+        result.extend_from_slice(&args_vec[2..]);
+        result
+    } else {
+        args_vec
+    };
+    
+    let matches = uu_app().try_get_matches_from(args_to_parse)?;
 
     let verbose = matches.get_flag("verbose");
 
@@ -102,8 +113,9 @@ pub fn uu_app() -> Command {
             // Files to process
             Arg::new("files")
                 .help("Files to archive or extract")
-                .value_parser(clap::value_parser!(PathBuf))
-                .num_args(0..),
+                .hide(true)
+                .action(ArgAction::Append)
+                .value_parser(clap::value_parser!(PathBuf)),
         ])
 }
 
