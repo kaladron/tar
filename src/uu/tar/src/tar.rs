@@ -120,4 +120,142 @@ pub fn uu_app() -> Command {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_has_correct_name() {
+        let app = uu_app();
+        assert_eq!(app.get_name(), uucore::util_name());
+    }
+
+    #[test]
+    fn test_app_has_version() {
+        let app = uu_app();
+        assert!(app.get_version().is_some());
+    }
+
+    #[test]
+    fn test_app_has_about() {
+        let app = uu_app();
+        let about = app.get_about();
+        assert!(about.is_some());
+        assert_eq!(about.unwrap().to_string(), ABOUT);
+    }
+
+    #[test]
+    fn test_conflicting_create_and_extract() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec!["tar", "-c", "-x", "-f", "test.tar"]);
+        // Should succeed in parsing but our logic will detect the conflict
+        // The actual conflict detection happens in uumain
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        assert!(matches.get_flag("create"));
+        assert!(matches.get_flag("extract"));
+    }
+
+    #[test]
+    fn test_file_argument_parsing() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec!["tar", "-cf", "archive.tar", "file.txt"]);
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        assert!(matches.get_flag("create"));
+        assert_eq!(
+            matches.get_one::<PathBuf>("file").unwrap(),
+            &PathBuf::from("archive.tar")
+        );
+    }
+
+    #[test]
+    fn test_multiple_files_parsing() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec![
+            "tar", "-cf", "archive.tar", "file1.txt", "file2.txt", "file3.txt",
+        ]);
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        let files: Vec<_> = matches
+            .get_many::<PathBuf>("files")
+            .unwrap()
+            .collect();
+        assert_eq!(files.len(), 3);
+    }
+
+    #[test]
+    fn test_verbose_flag_parsing() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec!["tar", "-cvf", "archive.tar", "file.txt"]);
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        assert!(matches.get_flag("verbose"));
+        assert!(matches.get_flag("create"));
+    }
+
+    #[test]
+    fn test_extract_verbose_flag_parsing() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec!["tar", "-xvf", "archive.tar"]);
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        assert!(matches.get_flag("verbose"));
+        assert!(matches.get_flag("extract"));
+    }
+
+    #[test]
+    fn test_compression_flags_present() {
+        let app = uu_app();
+        
+        // Test gzip flag
+        let result = app.clone().try_get_matches_from(vec!["tar", "-czf", "archive.tar.gz"]);
+        assert!(result.is_ok());
+        assert!(result.unwrap().get_flag("gzip"));
+        
+        // Test bzip2 flag
+        let result = app.clone().try_get_matches_from(vec!["tar", "-cjf", "archive.tar.bz2"]);
+        assert!(result.is_ok());
+        assert!(result.unwrap().get_flag("bzip2"));
+        
+        // Test xz flag
+        let result = app.try_get_matches_from(vec!["tar", "-cJf", "archive.tar.xz"]);
+        assert!(result.is_ok());
+        assert!(result.unwrap().get_flag("xz"));
+    }
+
+    #[test]
+    fn test_list_operation_flag() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec!["tar", "-tf", "archive.tar"]);
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        assert!(matches.get_flag("list"));
+    }
+
+    #[test]
+    fn test_preserve_permissions_flag() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec!["tar", "-xpf", "archive.tar"]);
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        assert!(matches.get_flag("preserve-permissions"));
+    }
+
+    #[test]
+    fn test_dereference_flag() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec!["tar", "-chf", "archive.tar", "link"]);
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        assert!(matches.get_flag("dereference"));
+    }
+
+    #[test]
+    fn test_absolute_names_flag() {
+        let app = uu_app();
+        let result = app.try_get_matches_from(vec!["tar", "-xPf", "archive.tar"]);
+        assert!(result.is_ok());
+        let matches = result.unwrap();
+        assert!(matches.get_flag("absolute-names"));
+    }
+}
