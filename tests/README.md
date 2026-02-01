@@ -6,7 +6,7 @@ This directory contains tests for the `tar` command-line utility.
 
 The `tar` utility is built on top of the `tar-rs` library. Because of this, we split our testing into two distinct areas:
 
-1.  **The Library (`tar-rs`)**: This is where we test the nitty-gritty details of the tar format. If you want to verify that permissions are preserved correctly, that long paths are handled according to the UStar spec, or that unicode filenames are encoded properly, those tests belong in `tar-rs/tests/`.
+1.  **The Library (`tar-rs`)**: This is where the nitty-gritty details of the tar format are tested. If you want to verify that permissions are preserved correctly, that long paths are handled according to the UStar spec, or that unicode filenames are encoded properly, those tests belong in the `tar-rs` crate itself.
 
 2.  **The Application (`tar`)**: This is where we test the user interface. These tests ensure that the command-line arguments are parsed correctly, that the program exits with the right status codes, and that basic operations like creating and extracting archives actually work from a user's perspective.
 
@@ -15,7 +15,7 @@ The `tar` utility is built on top of the `tar-rs` library. Because of this, we s
 When writing tests here, focus on the **user experience**.
 
 *   **Do** check that flags like `-c`, `-x`, `-v`, and `-f` do what they say.
-*   **Do** check that invalid combinations of flags produce a helpful error message and a usage exit code (64).
+*   **Do** check that invalid combinations of flags produce a helpful error message and exit code 2.
 *   **Do** check that serious errors (like file not found) return exit code 2.
 *   **Do** perform "smoke tests" — create an archive and make sure the file appears; extract an archive and make sure the files come out.
 
@@ -48,6 +48,6 @@ cargo test test_name
 We follow GNU tar conventions for exit codes:
 
 *   **0**: Success.
-*   **1**: Some files differ (used in compare mode).
-*   **2**: Fatal error (file not found, permission denied, etc.).
-*   **64**: Usage error (invalid flags, bad syntax).
+*   **1**: Some files differ (used in compare mode, not yet implemented).
+*   **2**: Fatal error (file not found, permission denied, conflicting options like `-c -x`, invalid option values).
+*   **64**: Command line usage error (unknown option, missing required argument, wrong number of values for an option).
