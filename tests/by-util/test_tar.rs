@@ -574,3 +574,98 @@ fn test_extract_created_from_absolute_path() {
 
     assert!(at.file_exists(expected_path));
 }
+
+// POSIX keystring tests (no leading '-' on the key operand)
+
+#[test]
+fn test_posix_create() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.write("file1.txt", "test content");
+
+    ucmd.args(&["cf", "archive.tar", "file1.txt"])
+        .succeeds()
+        .no_output();
+
+    assert!(at.file_exists("archive.tar"));
+    assert!(at.read_bytes("archive.tar").len() > TAR_BLOCK_SIZE);
+}
+
+#[test]
+fn test_posix_create_verbose() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.write("file1.txt", "content");
+
+    ucmd.args(&["cvf", "archive.tar", "file1.txt"])
+        .succeeds()
+        .stdout_contains("file1.txt");
+
+    assert!(at.file_exists("archive.tar"));
+}
+
+#[test]
+fn test_posix_extract() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.write("original.txt", "test content");
+    ucmd.args(&["cf", "archive.tar", "original.txt"]).succeeds();
+
+    at.remove("original.txt");
+
+    new_ucmd!()
+        .args(&["xf", &at.plus_as_string("archive.tar")])
+        .current_dir(at.as_string())
+        .succeeds()
+        .no_output();
+
+    assert!(at.file_exists("original.txt"));
+    assert_eq!(at.read("original.txt"), "test content");
+}
+
+#[test]
+fn test_posix_extract_verbose() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.write("file1.txt", "content1");
+    at.write("file2.txt", "content2");
+    ucmd.args(&["cf", "archive.tar", "file1.txt", "file2.txt"])
+        .succeeds();
+
+    at.remove("file1.txt");
+    at.remove("file2.txt");
+
+    let result = new_ucmd!()
+        .args(&["xvf", &at.plus_as_string("archive.tar")])
+        .current_dir(at.as_string())
+        .succeeds();
+
+    let stdout = result.stdout_str();
+    assert!(stdout.contains("file1.txt"));
+    assert!(stdout.contains("file2.txt"));
+
+    assert!(at.file_exists("file1.txt"));
+    assert!(at.file_exists("file2.txt"));
+}
+
+#[test]
+fn test_posix_and_dash_prefix_both_work() {
+    // Confirm that POSIX-style and dash-prefixed styles produce identical results.
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.write("file.txt", "hello");
+
+    // POSIX style
+    ucmd.args(&["cf", "posix.tar", "file.txt"]).succeeds();
+
+    // Dash-prefix style
+    new_ucmd!()
+        .args(&["-cf", "dash.tar", "file.txt"])
+        .current_dir(at.as_string())
+        .succeeds();
+
+    assert_eq!(
+        at.read_bytes("posix.tar").len(),
+        at.read_bytes("dash.tar").len()
+    );
+}
