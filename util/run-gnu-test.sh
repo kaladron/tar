@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-# Use GNU version for make, nproc, readlink on *BSD
+# Use GNU version for make, nproc, readlink, timeout on *BSD
 MAKE=$(command -v gmake || command -v make)
-NPROC=$(command -v gnproc || command -v nproc)
+NPROC=$(command -v gnproc || command -v nproc || echo 3)
 READLINK=$(command -v greadlink || command -v readlink)
+TIMEOUT=$(command -v gtimeout || command -v timeout)
 
 ME="${0}"
 ME_dir="$(dirname -- "$("${READLINK:-readlink}" -fm -- "${ME}")")"
@@ -39,4 +40,4 @@ echo "Running GNU tar tests..."
 # Run with timeout and make check
 # We use $* to pass any additional user arguments (e.g. TESTSUITEFLAGS="1-5")
 cp "${TAR}" src/tar
-timeout -sKILL 4h "${MAKE}" -j "$("${NPROC}")" check "$@"
+"${TIMEOUT}" -sKILL 4h "${MAKE}" -j "$("${NPROC}")" check "$@"

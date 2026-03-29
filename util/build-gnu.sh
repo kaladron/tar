@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+# Use GNU versions for make, nproc on *BSD
+NPROC=$(command -v gnproc || command -v nproc || echo 3)
+
 ME="${0}"
 ME_dir="$(dirname -- "$("${READLINK:-readlink}" -fm -- "${ME}")")"
 REPO_main_dir="$(dirname -- "${ME_dir}")"
@@ -54,4 +57,4 @@ if [ ! -f Makefile ]; then
 fi
 
 echo "Building GNU tar (for test suite)..."
-make -j$(nproc)
+make -j"$("${NPROC}")"
