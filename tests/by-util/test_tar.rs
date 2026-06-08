@@ -814,3 +814,112 @@ fn test_list_conflicts_with_extract() {
         .code_is(2)
         .stderr_contains("cannot be used with");
 }
+
+#[cfg(unix)]
+#[test]
+fn test_create_symlink_to_directory_does_not_recurse() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.mkdir("dir1");
+    at.write("dir1/file1.txt", "content");
+
+    let sandbox_root = PathBuf::from(at.root_dir_resolved());
+    let target_dir = sandbox_root.join("dir1");
+    let symlink_path = sandbox_root.join("sym_dir");
+    std::os::unix::fs::symlink(&target_dir, &symlink_path).unwrap();
+
+    ucmd.arg("-cf")
+        .arg("archive.tar")
+        .arg("sym_dir")
+        .current_dir(at.as_string())
+        .succeeds();
+
+    let result = new_ucmd!()
+        .arg("-tf")
+        .arg("archive.tar")
+        .current_dir(at.as_string())
+        .succeeds();
+
+    let stdout = result.stdout_str();
+    assert!(stdout.contains("sym_dir"));
+    assert!(!stdout.contains("sym_dir/file1.txt"));
+    assert!(!stdout.contains("sym_dir/"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_create_verbose_symlink_to_directory_does_not_recurse() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.mkdir("dir1");
+    at.write("dir1/file1.txt", "content");
+
+    let sandbox_root = PathBuf::from(at.root_dir_resolved());
+    let target_dir = sandbox_root.join("dir1");
+    let symlink_path = sandbox_root.join("sym_dir");
+    std::os::unix::fs::symlink(&target_dir, &symlink_path).unwrap();
+
+    let result = ucmd
+        .arg("-cvf")
+        .arg("archive.tar")
+        .arg("sym_dir")
+        .current_dir(at.as_string())
+        .succeeds();
+
+    let stdout = result.stdout_str();
+    assert!(stdout.contains("sym_dir"));
+    assert!(!stdout.contains("sym_dir/file1.txt"));
+    assert!(!stdout.contains("sym_dir/"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_create_broken_symlink_succeeds() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let sandbox_root = PathBuf::from(at.root_dir_resolved());
+    let target = sandbox_root.join("nonexistent");
+    let symlink_path = sandbox_root.join("broken");
+    std::os::unix::fs::symlink(&target, &symlink_path).unwrap();
+
+    ucmd.arg("-cf")
+        .arg("archive.tar")
+        .arg("broken")
+        .current_dir(at.as_string())
+        .succeeds();
+
+    assert!(at.file_exists("archive.tar"));
+
+    new_ucmd!()
+        .arg("-tf")
+        .arg("archive.tar")
+        .current_dir(at.as_string())
+        .succeeds()
+        .stdout_contains("broken");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_list_verbose_shows_symlink_target() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.write("file.txt", "hello");
+    let symlink_path = PathBuf::from(at.root_dir_resolved()).join("symlink.txt");
+    std::os::unix::fs::symlink("file.txt", &symlink_path).unwrap();
+
+    new_ucmd!()
+        .arg("-cf")
+        .arg("archive.tar")
+        .arg("symlink.txt")
+        .current_dir(at.as_string())
+        .succeeds();
+
+    let result = ucmd
+        .arg("-tvf")
+        .arg("archive.tar")
+        .current_dir(at.as_string())
+        .succeeds();
+
+    let stdout = result.stdout_str();
+    assert!(stdout.contains("symlink.txt -> file.txt"));
+}

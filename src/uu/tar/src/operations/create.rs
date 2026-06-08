@@ -42,28 +42,31 @@ pub fn create_archive(
     // Create Builder instance
     let mut builder = Builder::new(file);
     builder.preserve_absolute(allow_absolute);
+    builder.follow_symlinks(false);
 
     let mut out = BufWriter::new(io::stdout().lock());
 
     // Add each file or directory to the archive
     for &path in files {
-        // Check if path exists
-        if !path.exists() {
-            return Err(TarError::FileNotFound {
-                path: path.to_path_buf(),
-            }
-            .into());
-        }
+        // Check if path exists (including broken symlinks)
+        let metadata = match path.symlink_metadata() {
+            Ok(m) => m,
+            Err(e) => return Err(TarError::from_io_error(e, path).into()),
+        };
 
         if verbose {
             let to_print = get_tree(path)?
                 .iter()
-                .map(|p| (p.is_dir(), p.display().to_string()))
-                .map(|(is_dir, path)| {
-                    if is_dir {
-                        format!("{}{}", path, path::MAIN_SEPARATOR)
+                .map(|(p, is_real_dir)| {
+                    let path_str = p.display().to_string();
+                    if *is_real_dir {
+                        if !path_str.ends_with('/') && !path_str.ends_with(path::MAIN_SEPARATOR) {
+                            format!("{}{}", path_str, path::MAIN_SEPARATOR)
+                        } else {
+                            path_str
+                        }
                     } else {
-                        path
+                        path_str
                     }
                 })
                 .collect::<Vec<_>>()
@@ -94,7 +97,8 @@ pub fn create_archive(
         };
 
         // If it's a directory, recursively add all contents
-        if path.is_dir() {
+        // Do not recurse into symlinked directories
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
             builder.append_dir_all(normalized_name, path).map_err(|e| {
                 TarError::CannotAddDirectory {
                     path: path.to_path_buf(),
@@ -102,7 +106,7 @@ pub fn create_archive(
                 }
             })?;
         } else {
-            // For files, add them directly
+            // For files and symlinks, add them directly
             builder
                 .append_path_with_name(path, normalized_name)
                 .map_err(|e| TarError::CannotAddFile {
@@ -119,15 +123,17 @@ pub fn create_archive(
     Ok(())
 }
 
-fn get_tree(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+fn get_tree(path: &Path) -> Result<Vec<(PathBuf, bool)>, std::io::Error> {
     let mut paths = Vec::new();
     let mut stack = VecDeque::new();
     stack.push_back(path.to_path_buf());
 
     while let Some(current) = stack.pop_back() {
-        paths.push(current.clone());
-        if current.is_dir() {
-            for entry in fs::read_dir(current)? {
+        let metadata = current.symlink_metadata()?;
+        let is_real_dir = metadata.is_dir() && !metadata.file_type().is_symlink();
+        paths.push((current.clone(), is_real_dir));
+        if is_real_dir {
+            for entry in fs::read_dir(&current)? {
                 let child = entry?.path();
                 stack.push_back(child);
             }

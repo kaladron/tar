@@ -70,10 +70,16 @@ pub fn list_archive(archive_path: &Path, verbose: bool) -> UResult<()> {
                 .unwrap_or_else(Utc::now);
             let date_str = dt.format("%Y-%m-%d %H:%M");
 
+            let link_str = match entry.link_name() {
+                Ok(Some(target)) => format!(" -> {}", target.display()),
+                _ => String::new(),
+            };
+
             writeln!(
                 out,
-                "{permissions} {owner}/{group} {size:>8} {date_str} {}",
-                path.display()
+                "{permissions} {owner}/{group} {size:>8} {date_str} {}{}",
+                path.display(),
+                link_str
             )
             .map_err(TarError::Io)?;
         } else {
