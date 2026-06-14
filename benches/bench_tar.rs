@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tar::CompressionMode;
-use tar::operations;
+use tar::operations::{self, TarInput};
 use tempfile::TempDir;
 
 fn main() {
@@ -39,13 +39,13 @@ fn collect_files(dir: &Path) -> Vec<PathBuf> {
 /// Build a tar archive at `archive_path` from all files in `source_dir`.
 fn build_archive(archive_path: &Path, source_dir: &Path) {
     let files = collect_files(source_dir);
-    let refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+    let inputs: Vec<TarInput> = files.into_iter().map(TarInput::File).collect();
     let output = File::create(archive_path).unwrap();
     let status_output = io::sink();
     operations::create::create_archive(
         output,
         status_output,
-        &refs,
+        &inputs,
         true,
         false,
         CompressionMode::None,
@@ -67,13 +67,13 @@ fn create_archive_10_files(bencher: divan::Bencher) {
     let archive_path = out.path().join("bench.tar");
 
     bencher.bench_local(|| {
-        let refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+        let inputs: Vec<TarInput> = files.iter().map(|p| TarInput::File(p.clone())).collect();
         let output = File::create(&archive_path).unwrap();
         let status_output = io::sink();
         operations::create::create_archive(
             output,
             status_output,
-            &refs,
+            &inputs,
             true,
             false,
             CompressionMode::None,
@@ -92,13 +92,13 @@ fn create_archive_100_files(bencher: divan::Bencher) {
     let archive_path = out.path().join("bench.tar");
 
     bencher.bench_local(|| {
-        let refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+        let inputs: Vec<TarInput> = files.iter().map(|p| TarInput::File(p.clone())).collect();
         let output = File::create(&archive_path).unwrap();
         let status_output = io::sink();
         operations::create::create_archive(
             output,
             status_output,
-            &refs,
+            &inputs,
             true,
             false,
             CompressionMode::None,
@@ -123,7 +123,7 @@ fn create_archive_directory(bencher: divan::Bencher) {
         operations::create::create_archive(
             output,
             status_output,
-            &[sub.as_path()],
+            &[TarInput::File(sub.clone())],
             true,
             false,
             CompressionMode::None,

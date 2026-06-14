@@ -7,6 +7,7 @@ pub mod errors;
 pub mod operations;
 
 use crate::errors::TarError;
+use crate::operations::{CwdGuard, TarInput};
 use clap::{arg, crate_version, ArgAction, Command};
 use std::fs::File;
 use std::io::{self, IsTerminal};
@@ -32,10 +33,11 @@ fn is_posix_keystring(s: &str) -> bool {
     if s.is_empty() || s.starts_with('-') {
         return false;
     }
-    let valid_chars = "cxturvwfblmo";
+    let valid_chars = "cxturvwfblmoC";
     // function letters: c=create, x=extract, t=list, u=update, r=append
     // modifier letters: v=verbose, w=interactive, f=file, b=blocking-factor,
-    //                   l=one-file-system, m=modification-time, o=no-same-owner
+    //                   l=one-file-system, m=modification-time, o=no-same-owner,
+    //                   C=directory
     s.chars().all(|c| valid_chars.contains(c)) && s.chars().any(|c| "cxtur".contains(c))
 }
 
@@ -80,6 +82,13 @@ fn expand_posix_keystring(args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsStri
                     file_idx += 1;
                 }
             }
+            'C' => {
+                result.push(std::ffi::OsString::from("-C"));
+                if file_idx < file_operands.len() {
+                    result.push(file_operands[file_idx].clone());
+                    file_idx += 1;
+                }
+            }
             other => {
                 result.push(std::ffi::OsString::from(format!("-{other}")));
             }
@@ -89,6 +98,58 @@ fn expand_posix_keystring(args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsStri
     // Any remaining file operands are the files to archive/extract
     result.extend_from_slice(&file_operands[file_idx..]);
     result
+}
+
+fn construct_inputs(matches: &clap::ArgMatches) -> Vec<TarInput> {
+    let mut inputs = Vec::new();
+
+    let files_indices = matches.indices_of("files");
+    let dir_indices = matches.indices_of("directory");
+
+    let mut files_iter = matches.get_many::<PathBuf>("files").into_iter().flatten();
+    let mut dirs_iter = matches
+        .get_many::<PathBuf>("directory")
+        .into_iter()
+        .flatten();
+
+    let mut files_indices = files_indices.into_iter().flatten();
+    let mut dir_indices = dir_indices.into_iter().flatten();
+
+    let mut next_file_idx = files_indices.next();
+    let mut next_dir_idx = dir_indices.next();
+
+    loop {
+        match (next_file_idx, next_dir_idx) {
+            (Some(f_idx), Some(d_idx)) => {
+                if f_idx < d_idx {
+                    if let Some(file) = files_iter.next() {
+                        inputs.push(TarInput::File(file.clone()));
+                    }
+                    next_file_idx = files_indices.next();
+                } else {
+                    if let Some(dir) = dirs_iter.next() {
+                        inputs.push(TarInput::ChangeDir(dir.clone()));
+                    }
+                    next_dir_idx = dir_indices.next();
+                }
+            }
+            (Some(_), None) => {
+                if let Some(file) = files_iter.next() {
+                    inputs.push(TarInput::File(file.clone()));
+                }
+                next_file_idx = files_indices.next();
+            }
+            (None, Some(_)) => {
+                if let Some(dir) = dirs_iter.next() {
+                    inputs.push(TarInput::ChangeDir(dir.clone()));
+                }
+                next_dir_idx = dir_indices.next();
+            }
+            (None, None) => break,
+        }
+    }
+
+    inputs
 }
 
 #[uucore::main]
@@ -153,12 +214,25 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             uucore::error::USimpleError::new(64, "option requires an argument -- 'f'")
         })?;
 
-        return if archive_path == Path::new("-") {
-            operations::extract::extract_archive(io::stdin(), archive_path, verbose, compression)
+        let inputs = construct_inputs(&matches);
+
+        let file_opt = if archive_path == Path::new("-") {
+            None
         } else {
-            let file =
-                File::open(archive_path).map_err(|e| TarError::from_io_error(e, archive_path))?;
+            Some(File::open(archive_path).map_err(|e| TarError::from_io_error(e, archive_path))?)
+        };
+
+        let _guard = CwdGuard::new().map_err(TarError::Io)?;
+        for input in &inputs {
+            if let TarInput::ChangeDir(dir) = input {
+                std::env::set_current_dir(dir).map_err(|e| TarError::from_io_error(e, dir))?;
+            }
+        }
+
+        return if let Some(file) = file_opt {
             operations::extract::extract_archive(file, archive_path, verbose, compression)
+        } else {
+            operations::extract::extract_archive(io::stdin(), archive_path, verbose, compression)
         };
     }
 
@@ -168,12 +242,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             uucore::error::USimpleError::new(64, "option requires an argument -- 'f'")
         })?;
 
-        let files: Vec<&Path> = matches
-            .get_many::<PathBuf>("files")
-            .map(|v| v.map(|p| p.as_path()).collect())
-            .unwrap_or_default();
-
-        if files.is_empty() {
+        let inputs = construct_inputs(&matches);
+        let has_files = inputs.iter().any(|i| matches!(i, TarInput::File(_)));
+        if !has_files {
             return Err(uucore::error::USimpleError::new(
                 2,
                 "Cowardly refusing to create an empty archive",
@@ -190,7 +261,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 operations::create::create_archive(
                     output,
                     status_output,
-                    &files,
+                    &inputs,
                     allow_absolute,
                     verbose,
                     compression,
@@ -205,7 +276,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             operations::create::create_archive(
                 output,
                 status_output,
-                &files,
+                &inputs,
                 allow_absolute,
                 verbose,
                 compression,
@@ -219,12 +290,25 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             uucore::error::USimpleError::new(64, "option requires an argument -- 'f'")
         })?;
 
-        return if archive_path == Path::new("-") {
-            operations::list::list_archive(io::stdin(), archive_path, verbose, compression)
+        let inputs = construct_inputs(&matches);
+
+        let file_opt = if archive_path == Path::new("-") {
+            None
         } else {
-            let file =
-                File::open(archive_path).map_err(|e| TarError::from_io_error(e, archive_path))?;
+            Some(File::open(archive_path).map_err(|e| TarError::from_io_error(e, archive_path))?)
+        };
+
+        let _guard = CwdGuard::new().map_err(TarError::Io)?;
+        for input in &inputs {
+            if let TarInput::ChangeDir(dir) = input {
+                std::env::set_current_dir(dir).map_err(|e| TarError::from_io_error(e, dir))?;
+            }
+        }
+
+        return if let Some(file) = file_opt {
             operations::list::list_archive(file, archive_path, verbose, compression)
+        } else {
+            operations::list::list_archive(io::stdin(), archive_path, verbose, compression)
         };
     }
 
@@ -271,6 +355,9 @@ pub fn uu_app() -> Command {
             // arg!(-p --"preserve-permissions" "Extract information about file permissions"),
             // Help
             arg!(--help "Print help information").action(ArgAction::Help),
+            arg!(-C --directory <DIR> "Change to directory DIR")
+                .value_parser(clap::value_parser!(PathBuf))
+                .action(ArgAction::Append),
             // Files to process
             arg!([files]... "Files to archive or extract")
                 .action(ArgAction::Append)
@@ -431,6 +518,101 @@ mod tests {
         assert_eq!(result, 0);
         assert_eq!(
             fs::read_to_string(tempdir.path().join("file.txt")).unwrap(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_expand_c_c_uppercase_f() {
+        let input = osvec(&["tar", "cCf", "dir", "archive.tar", "file.txt"]);
+        let expected = osvec(&["tar", "-c", "-C", "dir", "-f", "archive.tar", "file.txt"]);
+        assert_eq!(expand_posix_keystring(input), expected);
+    }
+
+    #[test]
+    fn test_uumain_create_with_directory() {
+        let tempdir = tempdir().unwrap();
+        let archive_path = tempdir.path().join("archive.tar");
+        let extract_dir = tempdir.path().join("extract");
+
+        {
+            let _guard = crate::operations::TestDirGuard::enter(tempdir.path());
+
+            let subdir = tempdir.path().join("subdir");
+            fs::create_dir(&subdir).unwrap();
+            fs::write(subdir.join("file.txt"), "hello from subdir").unwrap();
+
+            // Create archive using -C subdir file.txt
+            let create_args = vec![
+                OsString::from("test-bin"),
+                OsString::from("tar"),
+                OsString::from("-cf"),
+                OsString::from(&archive_path),
+                OsString::from("-C"),
+                OsString::from("subdir"),
+                OsString::from("file.txt"),
+            ];
+            assert_eq!(uumain(create_args.into_iter()), 0);
+        }
+
+        fs::create_dir(&extract_dir).unwrap();
+        {
+            let _extract_guard = crate::operations::TestDirGuard::enter(&extract_dir);
+
+            let extract_args = vec![
+                OsString::from("test-bin"),
+                OsString::from("tar"),
+                OsString::from("-xf"),
+                OsString::from(&archive_path),
+            ];
+            assert_eq!(uumain(extract_args.into_iter()), 0);
+        }
+
+        assert_eq!(
+            fs::read_to_string(extract_dir.join("file.txt")).unwrap(),
+            "hello from subdir"
+        );
+    }
+
+    #[test]
+    fn test_uumain_extract_with_directory() {
+        let tempdir = tempdir().unwrap();
+        let archive_path = tempdir.path().join("archive.tar");
+        let extract_dir = tempdir.path().join("extract");
+
+        // Create a file and archive it
+        {
+            let _guard = crate::operations::TestDirGuard::enter(tempdir.path());
+            fs::write("file.txt", "hello").unwrap();
+            let create_args = vec![
+                OsString::from("test-bin"),
+                OsString::from("tar"),
+                OsString::from("-cf"),
+                OsString::from(&archive_path),
+                OsString::from("file.txt"),
+            ];
+            assert_eq!(uumain(create_args.into_iter()), 0);
+            fs::remove_file("file.txt").unwrap();
+        }
+
+        fs::create_dir(&extract_dir).unwrap();
+
+        // Extract using -C
+        {
+            let _guard = crate::operations::TestDirGuard::enter(tempdir.path());
+            let extract_args = vec![
+                OsString::from("test-bin"),
+                OsString::from("tar"),
+                OsString::from("-xf"),
+                OsString::from(&archive_path),
+                OsString::from("-C"),
+                OsString::from("extract"),
+            ];
+            assert_eq!(uumain(extract_args.into_iter()), 0);
+        }
+
+        assert_eq!(
+            fs::read_to_string(extract_dir.join("file.txt")).unwrap(),
             "hello"
         );
     }

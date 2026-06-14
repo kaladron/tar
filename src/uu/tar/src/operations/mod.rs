@@ -4,7 +4,8 @@
 // file that was distributed with this source code.
 
 #[cfg(test)]
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -12,6 +13,31 @@ pub mod compression;
 pub mod create;
 pub mod extract;
 pub mod list;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TarInput {
+    File(PathBuf),
+    ChangeDir(PathBuf),
+}
+
+pub struct CwdGuard {
+    original_cwd: PathBuf,
+}
+
+impl CwdGuard {
+    pub fn new() -> Result<Self, std::io::Error> {
+        let original_cwd = std::env::current_dir()?;
+        Ok(Self { original_cwd })
+    }
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        if let Err(e) = std::env::set_current_dir(&self.original_cwd) {
+            eprintln!("tar: Failed to restore directory: {}", e);
+        }
+    }
+}
 
 #[cfg(test)]
 pub(crate) fn test_cwd_lock() -> &'static Mutex<()> {

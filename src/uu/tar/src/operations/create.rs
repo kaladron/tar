@@ -5,6 +5,7 @@
 
 use crate::errors::TarError;
 use crate::operations::compression::ArchiveWriter;
+use crate::operations::{CwdGuard, TarInput};
 use crate::CompressionMode;
 use std::collections::VecDeque;
 use std::fs;
@@ -19,7 +20,7 @@ use uucore::error::UResult;
 /// # Arguments
 ///
 /// * `output` - Destination where the tar archive should be written
-/// * `files` - Slice of file paths to add to the archive
+/// * `inputs` - Slice of TarInput (files or directory changes)
 /// * `allow_absolute` - Allow absolute paths while creating archive
 /// * `verbose` - Whether to print verbose output during creation
 ///
@@ -32,11 +33,13 @@ use uucore::error::UResult;
 pub fn create_archive(
     output: impl Write,
     status_output: impl Write,
-    files: &[&Path],
+    inputs: &[TarInput],
     allow_absolute: bool,
     verbose: bool,
     compression: CompressionMode,
 ) -> UResult<()> {
+    let _guard = CwdGuard::new().map_err(TarError::Io)?;
+
     let output = ArchiveWriter::new(output, compression)?;
     let mut output = BufWriter::new(output);
     let mut status_output = BufWriter::new(status_output);
@@ -46,69 +49,74 @@ pub fn create_archive(
     builder.preserve_absolute(allow_absolute);
 
     // Add each file or directory to the archive
-    for &path in files {
-        // Check if path exists
-        if !path.exists() {
-            return Err(TarError::FileNotFound {
-                path: path.to_path_buf(),
+    for input in inputs {
+        match input {
+            TarInput::ChangeDir(dir) => {
+                std::env::set_current_dir(dir).map_err(|e| TarError::from_io_error(e, dir))?;
             }
-            .into());
-        }
-
-        if verbose {
-            let to_print = get_tree(path)?
-                .iter()
-                .map(|p| (p.is_dir(), p.display().to_string()))
-                .map(|(is_dir, path)| {
-                    if is_dir {
-                        format!("{}{}", path, path::MAIN_SEPARATOR)
-                    } else {
-                        path
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            writeln!(status_output, "{to_print}").map_err(TarError::Io)?;
-        }
-
-        // Normalize path if needed (so far, handles only absolute paths)
-        let normalized_name = if let Some(normalized) = normalize_path(path, allow_absolute) {
-            let original_components: Vec<Component> = path.components().collect();
-            let normalized_components: Vec<Component> = normalized.components().collect();
-            if original_components.len() > normalized_components.len() {
-                let removed: PathBuf = original_components
-                    [..original_components.len() - normalized_components.len()]
-                    .iter()
-                    .collect();
-                writeln!(
-                    std::io::stderr(),
-                    "tar: Removing leading `{}' from member names",
-                    removed.display()
-                )
-                .map_err(TarError::Io)?;
-            }
-
-            normalized
-        } else {
-            path.to_path_buf()
-        };
-
-        // If it's a directory, recursively add all contents
-        if path.is_dir() {
-            builder.append_dir_all(normalized_name, path).map_err(|e| {
-                TarError::CannotAddDirectory {
-                    path: path.to_path_buf(),
-                    source: e,
+            TarInput::File(path) => {
+                // Check if path exists
+                if !path.exists() {
+                    return Err(TarError::FileNotFound { path: path.clone() }.into());
                 }
-            })?;
-        } else {
-            // For files, add them directly
-            builder
-                .append_path_with_name(path, normalized_name)
-                .map_err(|e| TarError::CannotAddFile {
-                    path: path.to_path_buf(),
-                    source: e,
-                })?;
+
+                if verbose {
+                    let to_print = get_tree(path)?
+                        .iter()
+                        .map(|p| (p.is_dir(), p.display().to_string()))
+                        .map(|(is_dir, path)| {
+                            if is_dir {
+                                format!("{}{}", path, path::MAIN_SEPARATOR)
+                            } else {
+                                path
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    writeln!(status_output, "{to_print}").map_err(TarError::Io)?;
+                }
+
+                // Normalize path if needed (so far, handles only absolute paths)
+                let normalized_name = if let Some(normalized) = normalize_path(path, allow_absolute)
+                {
+                    let original_components: Vec<Component> = path.components().collect();
+                    let normalized_components: Vec<Component> = normalized.components().collect();
+                    if original_components.len() > normalized_components.len() {
+                        let removed: PathBuf = original_components
+                            [..original_components.len() - normalized_components.len()]
+                            .iter()
+                            .collect();
+                        writeln!(
+                            std::io::stderr(),
+                            "tar: Removing leading `{}' from member names",
+                            removed.display()
+                        )
+                        .map_err(TarError::Io)?;
+                    }
+
+                    normalized
+                } else {
+                    path.clone()
+                };
+
+                // If it's a directory, recursively add all contents
+                if path.is_dir() {
+                    builder
+                        .append_dir_all(&normalized_name, path)
+                        .map_err(|e| TarError::CannotAddDirectory {
+                            path: path.clone(),
+                            source: e,
+                        })?;
+                } else {
+                    // For files, add them directly
+                    builder
+                        .append_path_with_name(path, &normalized_name)
+                        .map_err(|e| TarError::CannotAddFile {
+                            path: path.clone(),
+                            source: e,
+                        })?;
+                }
+            }
         }
     }
 
@@ -160,7 +168,7 @@ mod tests {
     use super::*;
     use std::io::{self, Write};
     use tar::Archive;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::TempDir;
 
     struct FailFlushWriter;
     impl Write for FailFlushWriter {
@@ -175,6 +183,7 @@ mod tests {
     #[test]
     fn test_create_archive_flush_failed() {
         let dir = TempDir::new().unwrap();
+        let _guard = crate::operations::TestDirGuard::enter(dir.path());
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "hello").unwrap();
 
@@ -184,7 +193,7 @@ mod tests {
         let res = create_archive(
             output,
             status_output,
-            &[file_path.as_path()],
+            &[TarInput::File(file_path)],
             false,
             false,
             CompressionMode::None,
@@ -194,14 +203,14 @@ mod tests {
 
     #[test]
     fn test_create_archive_with_zstd() {
-        let tempdir = tempdir().unwrap();
+        let tempdir = TempDir::new().unwrap();
         let _guard = crate::operations::TestDirGuard::enter(tempdir.path());
         fs::write("file.txt", "hello").unwrap();
 
         create_archive(
             fs::File::create("archive.tar.zst").unwrap(),
             io::sink(),
-            &[Path::new("file.txt")],
+            &[TarInput::File(PathBuf::from("file.txt"))],
             false,
             false,
             CompressionMode::Zstd,
@@ -218,13 +227,14 @@ mod tests {
 
     #[test]
     fn test_create_archive_missing_file_fails() {
-        let tempdir = tempdir().unwrap();
+        let tempdir = TempDir::new().unwrap();
+        let _guard = crate::operations::TestDirGuard::enter(tempdir.path());
         let missing_path = tempdir.path().join("missing.txt");
 
         let err = create_archive(
             io::sink(),
             io::sink(),
-            &[missing_path.as_path()],
+            &[TarInput::File(missing_path)],
             false,
             false,
             CompressionMode::Zstd,
