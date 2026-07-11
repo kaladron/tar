@@ -105,8 +105,13 @@ pub fn create_archive(
 fn print_verbose_tree(status_output: &mut impl Write, path: &Path) -> UResult<()> {
     for (p, is_dir) in get_tree(path)? {
         if is_dir {
-            writeln!(status_output, "{}{}", p.display(), path::MAIN_SEPARATOR)
-                .map_err(TarError::Io)?;
+            let path_str = p.to_string_lossy();
+            if !path_str.ends_with('/') && !path_str.ends_with(path::MAIN_SEPARATOR) {
+                writeln!(status_output, "{}{}", path_str, path::MAIN_SEPARATOR)
+                    .map_err(TarError::Io)?;
+            } else {
+                writeln!(status_output, "{}", path_str).map_err(TarError::Io)?;
+            }
         } else {
             writeln!(status_output, "{}", p.display()).map_err(TarError::Io)?;
         }

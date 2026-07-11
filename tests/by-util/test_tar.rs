@@ -87,6 +87,31 @@ fn test_create_dir_verbose() {
 }
 
 #[test]
+fn test_create_dir_with_trailing_slash_verbose() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let separator = std::path::MAIN_SEPARATOR;
+    let dir1_path = "dir1";
+    let dir_arg = format!("{dir1_path}{separator}");
+
+    at.mkdir(dir1_path);
+
+    let result = ucmd.args(&["-cvf", "archive.tar", &dir_arg]).succeeds();
+
+    let stdout = result.stdout_str();
+    println!("STDOUT: {:?}", stdout);
+    assert!(stdout.contains(&dir_arg));
+    // Ensure we don't have duplicate separators (e.g. dir1// or dir1\\)
+
+    let double_separator = format!("{separator}{separator}");
+    assert!(
+        !stdout.contains(&double_separator),
+        "Output contains double separator: {}",
+        stdout
+    );
+}
+
+#[test]
 fn test_create_single_file() {
     let (at, mut ucmd) = at_and_ucmd!();
 
